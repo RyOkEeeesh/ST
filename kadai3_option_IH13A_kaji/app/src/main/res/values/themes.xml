@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.Kadai3_option_IH13A_kaji" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
