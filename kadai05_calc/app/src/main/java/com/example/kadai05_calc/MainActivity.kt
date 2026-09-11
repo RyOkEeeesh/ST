@@ -91,19 +91,17 @@ fun tokenize(input: String): List<String> {
     while (i < input.length) {
         val ch = input[i]
         when {
-            ch.isDigit() -> {
+            // 数字と小数点をまとめて1つの数値トークンとして扱う
+            // （以前は "1.5" が "1" と ".5" の2トークンに分割されてしまい、
+            //   小数点を含む計算が必ずエラーになっていた）
+            ch.isDigit() || ch == '.' -> {
                 var num = ""
-                while (i < input.length && input[i].isDigit()) {
-                    num += input[i]
-                    i++
-                }
-                result.add(num)
-                continue
-            }
-            ch == '.' -> {
-                var num = "."
-                i++
-                while (i < input.length && input[i].isDigit()) {
+                var dotCount = 0
+                while (i < input.length && (input[i].isDigit() || input[i] == '.')) {
+                    if (input[i] == '.') {
+                        dotCount++
+                        if (dotCount > 1) break // 2個目以降の"."はこの数値に含めない
+                    }
                     num += input[i]
                     i++
                 }
@@ -204,6 +202,15 @@ fun calcRPN(tokens: List<String>): Double? {
     return if (stack.size == 1) stack.last() else null
 }
 
+// 数値を表示用文字列に整形（小数点以下が.0の場合は整数表示、それ以外はそのまま）
+fun formatNumber(value: Double): String {
+    return if (value == value.toLong().toDouble()) {
+        value.toLong().toString()
+    } else {
+        value.toString()
+    }
+}
+
 // 4. メイン計算関数（UIで使う）
 @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
 fun calculateExpression(expression: String): String {
@@ -217,15 +224,27 @@ fun calculateExpression(expression: String): String {
     val result = calcRPN(rpn)
 
     return if (result != null) {
-        // 小数点以下が.0の場合は整数表示、それ以外はそのまま
-        if (result == result.toLong().toDouble()) {
-            result.toLong().toString()
-        } else {
-            result.toString()
-        }
+        formatNumber(result)
     } else {
         "エラー"
     }
+}
+
+// ============================================================
+// フォントサイズ自動調整
+// ============================================================
+
+// 文字数に応じてフォントサイズを段階的に縮小し、1行に収まるようにする
+fun autoFontSize(text: String, maxSize: Int, minSize: Int): androidx.compose.ui.unit.TextUnit {
+    val length = text.length
+    val size = when {
+        length <= 12 -> maxSize
+        length <= 16 -> (maxSize * 0.8).toInt()
+        length <= 20 -> (maxSize * 0.65).toInt()
+        length <= 24 -> (maxSize * 0.5).toInt()
+        else -> minSize
+    }
+    return size.coerceAtLeast(minSize).sp
 }
 
 // ============================================================
@@ -237,10 +256,38 @@ fun calculateExpression(expression: String): String {
 fun CalculatorScreen() {
     var displayText by remember { mutableStateOf("0") }
     var expression by remember { mutableStateOf("") }
+    // "="を押した直後の式表示（"1+2 = 3"のような履歴文字列）
+    var historyText by remember { mutableStateOf("") }
+    // "="を押した直後かどうか。true の間に数字などを押すと新しい計算として入力し直す
+    var justCalculated by remember { mutableStateOf(false) }
+
+    // 式が空なら"AC"（オールクリア）、入力中なら"C"（現在の入力をクリア）に切り替える
+    val clearLabel = if (expression.isEmpty()) "AC" else "C"
+
+    val operatorTexts = setOf(
+        CalcConstants.PLUS, CalcConstants.MINUS, CalcConstants.MULTIPLY, CalcConstants.DIVIDE
+    )
+
+    // 入力中の式をUI記号→計算用記号に変換するヘルパー
+    fun toCalcSymbols(expr: String): String =
+        expr.replace(CalcConstants.MULTIPLY, CalcConstants.CALC_MULTIPLY)
+            .replace(CalcConstants.DIVIDE, CalcConstants.CALC_DIVIDE)
+
+    // 計算中の式に対する結果のライブプレビュー（計算できない途中の式なら空文字）
+    val livePreview: String =
+        if (!justCalculated && expression.isNotEmpty()) {
+            val preview = calculateExpression(toCalcSymbols(expression))
+            if (preview == "エラー") "" else preview
+        } else {
+            ""
+        }
+
+    // 上段に出す文字列：="直後は履歴、入力中はライブプレビュー（結果が出せる時だけ）
+    val topText = if (justCalculated) historyText else livePreview
 
     val buttons = listOf(
         "${CalcConstants.LEFT_PAREN}${CalcConstants.RIGHT_PAREN}",
-        CalcConstants.CLEAR,
+        clearLabel,
         CalcConstants.BACKSPACE,
         CalcConstants.DIVIDE,
         "7", "8", "9", CalcConstants.MULTIPLY,
@@ -261,18 +308,26 @@ fun CalculatorScreen() {
                 .fillMaxWidth()
                 .padding(vertical = 16.dp)
         ) {
-            // 入力中の式（小さく表示）
+            // 上段：="の後は履歴（式 = 結果）、入力中は結果が出せる時だけプレビュー表示
             Text(
-                text = expression,
-                style = MaterialTheme.typography.bodyMedium,
+                text = topText,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = autoFontSize(topText, maxSize = 18, minSize = 12),
+                    color = if (justCalculated)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                ),
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.End,
-                maxLines = 2
+                maxLines = 1
             )
-            // 結果（大きく表示）
+            // 下段：入力中の式、または="の後は結果（長くなったら縮小しつつ1行に収める）
             Text(
                 text = displayText,
-                style = MaterialTheme.typography.headlineLarge.copy(fontSize = 48.sp),
+                style = MaterialTheme.typography.headlineLarge.copy(
+                    fontSize = autoFontSize(displayText, maxSize = 48, minSize = 20)
+                ),
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.End,
                 maxLines = 1
@@ -291,12 +346,21 @@ fun CalculatorScreen() {
                     text = buttonText,
                     onClick = {
                         when (buttonText) {
-                            CalcConstants.CLEAR -> {
+                            clearLabel -> {
+                                // AC/Cどちらでも今は同じ全クリア動作（表示上のラベルだけ切り替わる）
                                 expression = ""
                                 displayText = "0"
+                                historyText = ""
+                                justCalculated = false
                             }
                             CalcConstants.BACKSPACE -> {
-                                if (expression.isNotEmpty()) {
+                                if (justCalculated) {
+                                    // 結果表示直後のバックスペースは全クリア扱いにする
+                                    expression = ""
+                                    displayText = "0"
+                                    historyText = ""
+                                    justCalculated = false
+                                } else if (expression.isNotEmpty()) {
                                     expression = expression.dropLast(1)
                                     displayText = if (expression.isEmpty()) "0" else expression
                                 }
@@ -304,15 +368,37 @@ fun CalculatorScreen() {
                             CalcConstants.EQUALS -> {
                                 if (expression.isNotEmpty()) {
                                     // UI記号（×÷）を計算用記号（*/）に変換
-                                    val calcExpression = expression
-                                        .replace(CalcConstants.MULTIPLY, CalcConstants.CALC_MULTIPLY)
-                                        .replace(CalcConstants.DIVIDE, CalcConstants.CALC_DIVIDE)
-                                    val result = calculateExpression(calcExpression)
+                                    val result = calculateExpression(toCalcSymbols(expression))
+                                    historyText = expression
                                     displayText = result
-                                    expression = "$expression = $result"
+                                    justCalculated = true
                                 }
                             }
+                            CalcConstants.PERCENT -> {
+                                if (justCalculated) {
+                                    // 結果表示直後に%を押したら、結果を%変換して新しい計算にする
+                                    val v = displayText.toDoubleOrNull()
+                                    expression = if (v != null) formatNumber(v / 100) else ""
+                                    justCalculated = false
+                                } else {
+                                    // 式の末尾にある数値だけを%（÷100）に変換する
+                                    var i = expression.length
+                                    while (i > 0 && (expression[i - 1].isDigit() || expression[i - 1] == '.')) i--
+                                    val trailingNumber = expression.substring(i)
+                                    val v = trailingNumber.toDoubleOrNull()
+                                    if (v != null) {
+                                        expression = expression.substring(0, i) + formatNumber(v / 100)
+                                    }
+                                    // 末尾が数値でない（演算子や開き括弧の直後など）場合は何もしない
+                                }
+                                displayText = expression.ifEmpty { "0" }
+                            }
                             "${CalcConstants.LEFT_PAREN}${CalcConstants.RIGHT_PAREN}" -> {
+                                // 結果表示直後にかっこを押したら新しい計算として開始
+                                if (justCalculated) {
+                                    expression = ""
+                                    justCalculated = false
+                                }
                                 // かっこボタン：文脈に応じて ( か ) を判断して追加
                                 val openCount = expression.count { it == CalcConstants.LEFT_PAREN[0] }
                                 val closeCount = expression.count { it == CalcConstants.RIGHT_PAREN[0] }
@@ -334,8 +420,23 @@ fun CalculatorScreen() {
                                 }
                                 displayText = expression
                             }
+                            in operatorTexts -> {
+                                if (justCalculated) {
+                                    // 結果に続けて演算子を押した場合は、結果の値から計算を続ける
+                                    expression = displayText + buttonText
+                                } else {
+                                    expression += buttonText
+                                }
+                                displayText = expression
+                                justCalculated = false
+                            }
                             else -> {
-                                // 数字、演算子、小数点など
+                                // 数字、小数点など
+                                if (justCalculated) {
+                                    // 結果表示後に数字などを押したら新しい計算として入力し直す
+                                    expression = ""
+                                    justCalculated = false
+                                }
                                 expression += buttonText
                                 displayText = expression
                             }
