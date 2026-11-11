@@ -2,9 +2,9 @@ package com.kadai7.ui
 
 import android.annotation.SuppressLint
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -349,14 +349,21 @@ private fun CenterResultSection(
     ) {
         AnimatedContent(
             targetState = evaluation,
+            contentAlignment = Alignment.Center,
             transitionSpec = {
-                (fadeIn() + scaleIn(
-                    initialScale = 0.85f,
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioMediumBouncy,
-                        stiffness = Spring.StiffnessMedium
-                    )
-                )).togetherWith(fadeOut())
+                if (targetState != null) {
+                    fadeIn(
+                        animationSpec = tween(durationMillis = 250, delayMillis = 300)
+                    ).togetherWith(
+                        fadeOut(
+                            animationSpec = tween(durationMillis = 200, delayMillis = 50)
+                        )
+                    ).using(null)
+                } else {
+                    fadeIn(animationSpec = snap())
+                        .togetherWith(fadeOut(animationSpec = snap()))
+                        .using(null)
+                }
             },
             label = "center_result"
         ) { currentEval ->
